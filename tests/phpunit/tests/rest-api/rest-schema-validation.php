@@ -62,6 +62,32 @@ class WP_Test_REST_Schema_Validation extends WP_UnitTestCase {
 		$this->assertWPError( rest_validate_value_from_schema( 1123, $schema ) );
 	}
 
+	/**
+	 * @ticket 51757
+	 */
+	public function test_const() {
+		$schema  = array(
+			'type'  => 'string',
+			'const' => 'ananas',
+		);
+		$valid   = 'ananas';
+		$invalid = 'pineapple';
+
+		$this->assertTrue( rest_validate_value_from_schema( $valid, $schema ) );
+		$this->assertWPError( rest_validate_value_from_schema( $invalid, $schema ) );
+
+		// By definition, const is functionally equivalent to an enum with a single value.
+		// However, they produce different error messages, so the invalid isn't tested.
+		$enum_schema = array(
+			'type'  => 'string',
+			'enum' => array( 'ananas' ),
+		);
+		$this->assertSame(
+			rest_validate_value_from_schema( $valid, $schema ),
+			rest_validate_value_from_schema( $valid, $enum_schema )
+		);
+	}
+
 	public function test_format_email() {
 		$schema = array(
 			'type'   => 'string',

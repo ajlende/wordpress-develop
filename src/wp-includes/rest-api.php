@@ -1908,6 +1908,7 @@ function rest_get_allowed_schema_keywords() {
 		'uniqueItems',
 		'anyOf',
 		'oneOf',
+		'const',
 	);
 }
 
@@ -2157,6 +2158,13 @@ function rest_validate_value_from_schema( $value, $args, $param = '' ) {
 		if ( ! in_array( $value, $args['enum'], true ) ) {
 			/* translators: 1: Parameter, 2: List of valid values. */
 			return new WP_Error( 'rest_invalid_param', sprintf( __( '%1$s is not one of %2$s.' ), $param, implode( ', ', $args['enum'] ) ) );
+		}
+	}
+
+	if ( ! empty( $args['const'] ) ) {
+		if ( $value !== $args['const'] ) {
+			/* translators: 1: Parameter, 2: The valid value. */
+			return new WP_Error( 'rest_invalid_param', sprintf( __( '%1$s is not const %2$s.' ), $param, $args['const'] ) );
 		}
 	}
 
