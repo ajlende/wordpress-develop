@@ -85,6 +85,13 @@ class WP_Test_REST_Attachments_Controller extends WP_Test_REST_Post_Type_Control
 		$orig_file2       = DIR_TESTDATA . '/images/codeispoetry.png';
 		$this->test_file2 = get_temp_dir() . 'codeispoetry.png';
 		copy( $orig_file2, $this->test_file2 );
+
+		if ( class_exists( WP_Image_Editor_Mock::class ) ) {
+			WP_Image_Editor_Mock::$spy = array(
+				'rotate' => array(),
+				'crop'   => array(),
+			);
+		}
 	}
 
 	public function tearDown() {
@@ -1993,6 +2000,110 @@ class WP_Test_REST_Attachments_Controller extends WP_Test_REST_Post_Type_Control
 			array( 320.0, 48.0, 64.0, 24.0 ),
 			WP_Image_Editor_Mock::$spy['crop'][0]
 		);
+	}
+
+	/**
+	 * @ticket TODO
+	 */
+	public function test_image_edit_modifiers() {
+		wp_set_current_user( self::$superadmin_id );
+		$attachment = self::factory()->attachment->create_upload_object( $this->test_file );
+
+		$this->setup_mock_editor();
+		WP_Image_Editor_Mock::$size_return = array(
+			'width'  => 640,
+			'height' => 480,
+		);
+
+		WP_Image_Editor_Mock::$edit_return['rotate'] = TRUE;
+		WP_Image_Editor_Mock::$edit_return['crop']   = new WP_Error();
+
+		$request = new WP_REST_Request( 'POST', "/wp/v2/media/{$attachment}/edit" );
+		$request->set_body_params(
+			array(
+				'src'       => wp_get_attachment_image_url( $attachment, 'full' ),
+				'modifiers' => array(
+					array(
+						'type' => 'rotate',
+						'args' => array(
+							'angle' => 60,
+						),
+					),
+					array(
+						'type' => 'crop',
+						'args' => array(
+							'left'   => 50,
+							'top'    => 10,
+							'width'  => 10,
+							'height' => 5,
+						),
+					),
+				),
+			)
+		);
+		$response = rest_do_request( $request );
+		$item     = $response->get_data();
+
+		$this->assertErrorResponse( 'rest_image_crop_failed', $response, 500 );
+
+		$this->assertCount( 1, WP_Image_Editor_Mock::$spy['rotate'] );
+		$this->assertSame( array( -60.0 ), WP_Image_Editor_Mock::$spy['rotate'][0] );
+		$this->assertCount( 1, WP_Image_Editor_Mock::$spy['crop'] );
+		$this->assertSame(
+			array( 320.0, 48.0, 64.0, 24.0 ),
+			WP_Image_Editor_Mock::$spy['crop'][0]
+		);
+	}
+
+	/**
+	 * @ticket TODO
+	 */
+	public function test_image_edit_modifiers_order() {
+		wp_set_current_user( self::$superadmin_id );
+		$attachment = self::factory()->attachment->create_upload_object( $this->test_file );
+
+		$this->setup_mock_editor();
+		WP_Image_Editor_Mock::$size_return = array(
+			'width'  => 640,
+			'height' => 480,
+		);
+
+		WP_Image_Editor_Mock::$edit_return['rotate'] = new WP_Error();
+		WP_Image_Editor_Mock::$edit_return['crop']   = TRUE;
+
+		$request = new WP_REST_Request( 'POST', "/wp/v2/media/{$attachment}/edit" );
+		$request->set_body_params(
+			array(
+				'src'       => wp_get_attachment_image_url( $attachment, 'full' ),
+				'modifiers' => array(
+					array(
+						'type' => 'rotate',
+						'args' => array(
+							'angle' => 60,
+						),
+					),
+					array(
+						'type' => 'crop',
+						'args' => array(
+							'left'   => 50,
+							'top'    => 10,
+							'width'  => 10,
+							'height' => 5,
+						),
+					),
+				),
+			)
+		);
+		$response = rest_do_request( $request );
+		$item     = $response->get_data();
+
+		$this->assertErrorResponse( 'rest_image_rotation_failed', $response, 500 );
+
+		$this->assertCount( 1, WP_Image_Editor_Mock::$spy['rotate'] );
+		$this->assertSame( array( -60.0 ), WP_Image_Editor_Mock::$spy['rotate'][0] );
+
+		// Code execution stopped from the error returned when rotating, so crop never happens.
+		$this->assertCount( 0, WP_Image_Editor_Mock::$spy['crop'] );
 	}
 
 	/**

@@ -447,20 +447,32 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 			);
 		}
 
-		// Check if we need to do anything.
-		$rotate = 0;
-		$crop   = false;
-
-		if ( ! empty( $request['rotation'] ) ) {
-			// Rotation direction: clockwise vs. counter clockwise.
-			$rotate = 0 - (int) $request['rotation'];
+		$modifiers = array();
+		if ( isset( $request['modifiers'] ) ) {
+			$modifiers = $request['modifiers'];
+		} else {
+			if ( ! empty( $request['rotation'] ) ) {
+				$modifiers[] = array(
+					'type' => 'rotate',
+					'args' => array(
+						'angle' => $request['rotation'],
+					),
+				);
+			}
+			if ( isset( $request['x'], $request['y'], $request['width'], $request['height'] ) ) {
+				$modifiers[] = array(
+					'type' => 'crop',
+					'args' => array(
+						'left'   => $request['x'],
+						'top'    => $request['y'],
+						'width'  => $request['width'],
+						'height' => $request['height'],
+					),
+				);
+			}
 		}
 
-		if ( isset( $request['x'], $request['y'], $request['width'], $request['height'] ) ) {
-			$crop = true;
-		}
-
-		if ( ! $rotate && ! $crop ) {
+		if ( 0 === count( $modifiers ) ) {
 			return new WP_Error(
 				'rest_image_not_edited',
 				__( 'The image was not edited. Edit the image before applying the changes.' ),
@@ -488,34 +500,45 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 			);
 		}
 
-		if ( 0 !== $rotate ) {
-			$result = $image_editor->rotate( $rotate );
+		foreach ( $modifiers as $modifier ) {
+			switch ($modifier['type']) {
+				case 'rotate':
+					// Rotation direction: clockwise vs. counter clockwise.
+					$rotate = 0 - $modifier['args']['angle'];
 
-			if ( is_wp_error( $result ) ) {
-				return new WP_Error(
-					'rest_image_rotation_failed',
-					__( 'Unable to rotate this image.' ),
-					array( 'status' => 500 )
-				);
-			}
-		}
+					if ( 0 !== $rotate ) {
+						$result = $image_editor->rotate( $rotate );
 
-		if ( $crop ) {
-			$size = $image_editor->get_size();
+						if ( is_wp_error( $result ) ) {
+							return new WP_Error(
+								'rest_image_rotation_failed',
+								__( 'Unable to rotate this image.' ),
+								array( 'status' => 500 )
+							);
+						}
+					}
+					break;
 
-			$crop_x = round( ( $size['width'] * (float) $request['x'] ) / 100.0 );
-			$crop_y = round( ( $size['height'] * (float) $request['y'] ) / 100.0 );
-			$width  = round( ( $size['width'] * (float) $request['width'] ) / 100.0 );
-			$height = round( ( $size['height'] * (float) $request['height'] ) / 100.0 );
+				case 'crop':
+					$size = $image_editor->get_size();
 
-			$result = $image_editor->crop( $crop_x, $crop_y, $width, $height );
+					$crop_x = round( ( $size['width'] * floatval( $modifier['args']['left'] ) ) / 100.0 );
+					$crop_y = round( ( $size['height'] * floatval( $modifier['args']['top'] ) ) / 100.0 );
+					$width  = round( ( $size['width'] * floatval( $modifier['args']['width'] ) ) / 100.0 );
+					$height = round( ( $size['height'] * floatval( $modifier['args']['height'] ) ) / 100.0 );
 
-			if ( is_wp_error( $result ) ) {
-				return new WP_Error(
-					'rest_image_crop_failed',
-					__( 'Unable to crop this image.' ),
-					array( 'status' => 500 )
-				);
+					if ( $size['width'] !== $width || $size['height'] !== $height ) {
+						$result = $image_editor->crop( $crop_x, $crop_y, $width, $height );
+
+						if ( is_wp_error( $result ) ) {
+							return new WP_Error(
+								'rest_image_crop_failed',
+								__( 'Unable to crop this image.' ),
+								array( 'status' => 500 )
+							);
+						}
+					}
+					break;
 			}
 		}
 
@@ -1286,7 +1309,7 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 	protected function get_edit_media_item_args() {
 		return array(
 			'rotation' => array(
-				'description'      => __( 'The amount to rotate the image clockwise in degrees.' ),
+				'description'      => __( 'DEPRECATED: Use `modifiers` instead. The amount to rotate the image clockwise in degrees.' ),
 				'type'             => 'integer',
 				'minimum'          => 0,
 				'exclusiveMinimum' => true,
@@ -1294,25 +1317,25 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 				'exclusiveMaximum' => true,
 			),
 			'x'        => array(
-				'description' => __( 'As a percentage of the image, the x position to start the crop from.' ),
+				'description' => __( 'DEPRECATED: Use `modifiers` instead. As a percentage of the image, the x position to start the crop from.' ),
 				'type'        => 'number',
 				'minimum'     => 0,
 				'maximum'     => 100,
 			),
 			'y'        => array(
-				'description' => __( 'As a percentage of the image, the y position to start the crop from.' ),
+				'description' => __( 'DEPRECATED: Use `modifiers` instead. As a percentage of the image, the y position to start the crop from.' ),
 				'type'        => 'number',
 				'minimum'     => 0,
 				'maximum'     => 100,
 			),
 			'width'    => array(
-				'description' => __( 'As a percentage of the image, the width to crop the image to.' ),
+				'description' => __( 'DEPRECATED: Use `modifiers` instead. As a percentage of the image, the width to crop the image to.' ),
 				'type'        => 'number',
 				'minimum'     => 0,
 				'maximum'     => 100,
 			),
 			'height'   => array(
-				'description' => __( 'As a percentage of the image, the height to crop the image to.' ),
+				'description' => __( 'DEPRECATED: Use `modifiers` instead. As a percentage of the image, the height to crop the image to.' ),
 				'type'        => 'number',
 				'minimum'     => 0,
 				'maximum'     => 100,
@@ -1322,6 +1345,85 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 				'type'        => 'string',
 				'format'      => 'uri',
 				'required'    => true,
+			),
+			'modifiers' => array(
+				'description' => __( 'List of edits to apply to the image.' ),
+				'type'        => 'array',
+				'minItems'    => 1,
+				'items'       => array(
+					'type'  => 'object',
+					'oneOf' => array(
+						array(
+							'title'      => 'rotate',
+							'properties' => array(
+								'type'  => array(
+									'description' => __( 'Rotation modifier type.' ),
+									'type'        => 'string',
+									'const'       => 'rotate',
+								),
+								'args' => array(
+									'description' => __( 'Rotation arguments.' ),
+									'type'        => 'object',
+									'properties'  => array(
+										'angle' => array(
+											'description' => __( 'The amount to rotate the image clockwise in degrees.' ),
+											'type' => 'number',
+										),
+									),
+									'required'   => array(
+										'angle',
+									),
+								),
+							),
+							'required'   => array(
+								'type',
+								'args',
+							),
+						),
+						array(
+							'title'      => 'crop',
+							'properties' => array(
+								'type' => array(
+									'description' => __( 'Crop modifier type.' ),
+									'type'  => 'string',
+									'const' => 'crop',
+								),
+								'args' => array(
+									'description' => __( 'Crop arguments.' ),
+									'type'        => 'object',
+									'properties'  => array(
+										'left'   => array(
+											'description' => __( 'The position from the left as a percentage of the image size to start the crop from.' ),
+											'type'    => 'number',
+										),
+										'top'    => array(
+											'description' => __( 'The position from the top as a percentage of the image size to start the crop from.' ),
+											'type'    => 'number',
+										),
+										'width'  => array(
+											'description' => __( 'The width as a percentage of the image size to crop to.' ),
+											'type'    => 'number',
+										),
+										'height' => array(
+											'description' => __( 'The height as a percentage of the image size to crop to.' ),
+											'type'    => 'number',
+										),
+									),
+									'required'   => array(
+										'left',
+										'top',
+										'width',
+										'height',
+									),
+								),
+							),
+							'required'   => array(
+								'type',
+								'args',
+							),
+						),
+					),
+				),
 			),
 		);
 	}
