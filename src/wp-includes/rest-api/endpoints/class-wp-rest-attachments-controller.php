@@ -547,6 +547,27 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 
 					break;
 
+				case 'duotone':
+					if ( ! $image_editor instanceof WP_Image_Editor_Imagick ) {
+						return new WP_Error(
+							'rest_image_duotone_failed',
+							__( 'ImageMagick is required for duotone edits.' ),
+							array( 'status' => 501 )
+						);
+					}
+
+					$result = $image_editor->duotone( $args['colors'] );
+
+					if ( is_wp_error( $result ) ) {
+						return new WP_Error(
+							'rest_image_duotone_failed',
+							__( 'Unable to apply duotone to this image.' ),
+							array( 'status' => 500 )
+						);
+					}
+
+					break;
+
 			}
 		}
 
@@ -1390,6 +1411,33 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 										'height' => array(
 											'description' => __( 'Height of the crop as a percentage of the image height.' ),
 											'type'        => 'number',
+										),
+									),
+								),
+							),
+						),
+						array(
+							'title'      => __( 'Duotone' ),
+							'properties' => array(
+								'type' => array(
+									'description' => __( 'Duotone type.' ),
+									'type'        => 'string',
+									'enum'        => array( 'duotone' ),
+								),
+								'args' => array(
+									'description' => __( 'Duotone arguments.' ),
+									'type'        => 'object',
+									'required'    => array(
+										'colors',
+									),
+									'properties'  => array(
+										'colors' => array(
+											'description' => __( 'Array of colors from dark to light to create the duotone effect.' ),
+											'type'        => 'array',
+											'minItems'    => 2,
+											'items'       => array(
+												'type' => 'string'
+											),
 										),
 									),
 								),

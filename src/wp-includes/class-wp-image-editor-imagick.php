@@ -639,6 +639,43 @@ class WP_Image_Editor_Imagick extends WP_Image_Editor {
 	}
 
 	/**
+	 * Applies a duotone filter to an image.
+	 *
+	 * @param array $colors Array of colors to apply as the duotone effect.
+	 * @return true|WP_Error
+	 */
+	public function duotone( $colors = array('#000','#FFF') ) {
+		try {
+			// Use perceptual brightness to convert to grayscale.
+			// Matrix represents Red, Green, Blue, Black, Alpha, Constant.
+			$matrix = array(
+				0.299, 0.587, 0.114, 0.0, 0.0, 0.0,
+				0.299, 0.587, 0.114, 0.0, 0.0, 0.0,
+				0.299, 0.587, 0.114, 0.0, 0.0, 0.0,
+				0.0,   0.0,   0.0,   1.0, 0.0, 0.0,
+				0.0,   0.0,   0.0,   0.0, 1.0, 0.0,
+				0.0,   0.0,   0.0,   0.0, 0.0, 1.0
+			);
+			$this->image->colorMatrixImage( $matrix );
+
+			// Apply color look-up table
+			$table = new Imagick();
+			$table->newImage( 1, count( $colors ), new ImagickPixel( 'black' ) );
+			$draw = new ImagickDraw();
+			foreach ( $colors as $index => $color ) {
+				$draw->setFillColor( $color );
+				$draw->color( 0, $index, Imagick::PAINT_POINT );
+				$table->drawImage( $draw );
+			}
+			$this->image->clutImage( $table );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'image_duotone_error', $e->getMessage() );
+		}
+
+		return true;
+	}
+
+	/**
 	 * Check if a JPEG image has EXIF Orientation tag and rotate it if needed.
 	 *
 	 * As ImageMagick copies the EXIF data to the flipped/rotated image, proceed only
