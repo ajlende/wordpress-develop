@@ -431,6 +431,114 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 		}
 	}
 
+	protected function edit_video_duotone( $attachment_id, $colors ) {
+		$kebab_colors = [];
+		foreach ($colors as $color) {
+			$kebab_colors[] = substr( $color, 1 );
+		}
+		$kebab_colors = implode( '-', $kebab_colors );
+
+		$video_file = get_attached_file( $attachment_id );
+		$video_ext  = pathinfo( $video_file, PATHINFO_EXTENSION );
+		$video_name = wp_basename( $video_file, ".{$video_ext}" );
+
+		$uploads = wp_upload_dir();
+
+		// TODO: Use same unique name for both tmp and file. (Use one wp_unique_filename call.)
+		$upload_dir  = $uploads['path'] . '/';
+		$output_name = "{$video_name}-duotone-{$kebab_colors}.{$video_ext}";
+		$output_file = $upload_dir . wp_unique_filename( $upload_dir, $output_name );
+
+		$temp_dir = get_temp_dir() . 'wp-ffmpeg' . $uploads['subdir'] . '/';
+		$log_file = $temp_dir . wp_unique_filename( $temp_dir, $output_name . '.log' );
+
+		// TODO: Make the haldcut file on-the-fly.
+		$haldclut_dir  = wp_upload_dir( '1970/01', false );
+		$haldclut_file = "{$haldclut_dir['path']}/hald16-{$kebab_colors}.png";
+
+		if ( ! file_exists( $haldclut_file ) ) {
+			return new WP_Error(
+				'rest_duotone_missing_lookup_table',
+				__( 'Unable to edit this video. %s %s', $output_file, $haldclut_file ),
+				array( 'status' => 500 )
+			);
+		}
+
+		// TODO: Better error message.
+		if ( ! wp_mkdir_p( $temp_dir ) ) {
+			return new WP_Error(
+				'rest_duotone_logging_error',
+				sprintf(
+					/* translators: %s: Directory path. */
+					__( 'Unable to create directory %s. Is its parent directory writable by the server?' ),
+					esc_html( $dirname )
+				)
+			);
+		}
+
+		$video_file_arg    = escapeshellarg( $video_file );
+		$haldclut_file_arg = escapeshellarg( $haldclut_file );
+		$output_file_arg   = escapeshellarg( $output_file );
+		$log_file_arg      = escapeshellarg( $log_file );
+
+		$command = "/usr/local/bin/ffmpeg -y -i {$video_file_arg} -i {$haldclut_file_arg} -filter_complex '[0][1] haldclut [out]; [out] format=yuv420p' {$output_file_arg}";
+		$command = "nohup {$command} > {$log_file_arg} 2>&1 &";
+
+		// TODO: Security for this.
+		shell_exec( $command );
+
+		// TODO: Should we make sure to maintain the pixel format?
+		// ffprobe -loglevel error -show_entries stream=pix_fmt -of csv=p=0 input.mp4
+		// # -> yuv420p
+
+		// Create new attachment post.
+		$new_attachment_post = array(
+			// TODO: Use a proper way to generate a mime type.
+			'post_mime_type' => 'video/' . $video_ext,
+			'guid'           => $uploads['url'] . "/$output_name",
+			'post_title'     => $video_name,
+			'post_content'   => '',
+		);
+
+		// Copy post_content, post_excerpt, and post_title from the edited video's attachment post.
+		$attachment_post = get_post( $attachment_id );
+
+		if ( $attachment_post ) {
+			$new_attachment_post['post_mime_type'] = $attachment_post->post_mime_type;
+			$new_attachment_post['post_content']   = $attachment_post->post_content;
+			$new_attachment_post['post_excerpt']   = $attachment_post->post_excerpt;
+			$new_attachment_post['post_title']     = $attachment_post->post_title;
+		}
+
+		$new_attachment_id = wp_insert_attachment( wp_slash( $new_attachment_post ), $output_file, 0, true );
+
+		if ( is_wp_error( $new_attachment_id ) ) {
+			if ( 'db_update_error' === $new_attachment_id->get_error_code() ) {
+				$new_attachment_id->add_data( array( 'status' => 500 ) );
+			} else {
+				$new_attachment_id->add_data( array( 'status' => 400 ) );
+			}
+			return $new_attachment_id;
+		}
+
+		$video_meta = wp_get_attachment_metadata( $attachment_id );
+
+		// TODO: Generate video thumbnail and meta after the edit is complete.
+		// $new_video_meta = wp_generate_attachment_metadata( $new_attachment_id, $output_file );
+		$new_video_meta = $video_meta;
+
+		// The attachment_id may change if the site is exported and imported.
+		$new_video_meta['parent_video'] = array(
+			'attachment_id' => $attachment_id,
+			// Path to the originally uploaded video file relative to the uploads directory.
+			'file'          => _wp_relative_upload_path( $video_file ),
+		);
+
+		wp_update_attachment_metadata( $new_attachment_id, $new_video_meta );
+
+		return $new_attachment_id;
+	}
+
 	/**
 	 * Applies edits to a video and creates a new attachment record.
 	 *
@@ -456,54 +564,19 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 		$modifiers = $request['modifiers'];
 
 		foreach ( $modifiers as $modifier ) {
+			$type = $modifier['type'];
 			$args = $modifier['args'];
-			switch ( $modifier['type'] ) {
+			switch ( $type ) {
 				case 'duotone':
-
-					$colors       = $args['colors'];
-					$kebab_colors = [];
-					foreach ($colors as $color) {
-						$kebab_colors[] = substr( $color, 1 );
+					// TODO: Do some check to ensure that duotone on a video is the only argument.
+					$new_attachment_id = $this->edit_video_duotone( $attachment_id, $args['colors'] );
+					if ( is_wp_error( $new_attachment_id ) ) {
+						return $new_attachment_id;
 					}
-					$kebab_colors = implode( '-', $kebab_colors );
-
-					$uploads     = wp_upload_dir();
-					$video_ext   = pathinfo( $video_file, PATHINFO_EXTENSION );
-					$video_name  = wp_basename( $video_file, ".{$video_ext}" );
-					$output_file = "{$uploads['path']}/{$video_name}-{$kebab_colors}.{$video_ext}";
-
-					// TODO: Check based on post metadata instead of filename.
-					if ( file_exists( $output_file ) ) {
-						$response = $this->prepare_item_for_response( get_post( $attachment_id ), $request );
-						$response->set_status( 200 );
-						$response->header( 'Location', rest_url( sprintf( '%s/%s/%s', $this->namespace, $this->rest_base, $attachment_id ) ) );
-						return $response;
-					}
-
-					// TODO: Make the haldcut file on-the-fly.
-					$haldclut_dir  = wp_upload_dir( '1970/01', false );
-					$haldclut_file = "{$haldclut_dir['path']}/hald16-{$kebab_colors}.png";
-
-					if ( ! file_exists( $haldclut_file ) ) {
-						return new WP_Error(
-							'rest_duotone_missing_lookup_table',
-							sprintf( 'Unable to edit this video. %s %s', $output_file, $haldclut_file ),
-							array( 'status' => 500 )
-						);
-					}
-
-					// TODO: Security best practices for this in particular.
-					$command = "/usr/local/bin/ffmpeg -y -i {$video_file}  -i {$haldclut_file} -filter_complex '[0][1] haldclut [out]; [out] format=yuv420p' {$output_file}";
-
-					shell_exec("nohup {$command} > /tmp/ffmpeg.log 2>&1 &");
-
-					return new WP_Error(
-						'rest_duotone_debug',
-						sprintf( '$ %s', $command ),
-						array( 'status' => 500 )
-					);
-
+					$response = $this->prepare_item_for_response( get_post( $new_attachment_id ), $request );
 					$response->set_status( 202 );
+					$response->header( 'Location', rest_url( sprintf( '%s/%s/%s', $this->namespace, $this->rest_base, $new_attachment_id ) ) );
+
 					return $response;
 			}
 		}
