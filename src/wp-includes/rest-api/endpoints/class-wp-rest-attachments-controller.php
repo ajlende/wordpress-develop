@@ -418,6 +418,107 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 	 * @return WP_REST_Response|WP_Error Response object on success, WP_Error object on failure.
 	 */
 	public function edit_media_item( $request ) {
+		if ( wp_attachment_is( 'image', $request['id'] ) ) {
+			return $this->edit_image_item( $request );
+		} else if ( wp_attachment_is( 'video', $request['id'] ) ) {
+			return $this->edit_video_item( $request );
+		} else {
+			return new WP_Error(
+				'rest_cannot_edit_file_type',
+				__( 'This type of file cannot be edited.' ),
+				array( 'status' => 400 )
+			);
+		}
+	}
+
+	/**
+	 * Applies edits to a video and creates a new attachment record.
+	 *
+	 * @since TODO
+	 *
+	 * @param WP_REST_Request $request Full details about the request.
+	 * @return WP_REST_Response|WP_Error Response object on success, WP_Error object on failure.
+	 */
+	protected function edit_video_item( $request ) {
+		$attachment_id = $request['id'];
+
+		$video_file = get_attached_file( $attachment_id );
+		$video_meta = wp_get_attachment_metadata( $attachment_id );
+
+		if ( ! $video_meta || ! $video_file ) {
+			return new WP_Error(
+				'rest_unknown_attachment',
+				__( 'Unable to get meta information for file.' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$modifiers = $request['modifiers'];
+
+		foreach ( $modifiers as $modifier ) {
+			$args = $modifier['args'];
+			switch ( $modifier['type'] ) {
+				case 'duotone':
+
+					$colors       = $args['colors'];
+					$kebab_colors = [];
+					foreach ($colors as $color) {
+						$kebab_colors[] = substr( $color, 1 );
+					}
+					$kebab_colors = implode( '-', $kebab_colors );
+
+					$uploads     = wp_upload_dir();
+					$video_ext   = pathinfo( $video_file, PATHINFO_EXTENSION );
+					$video_name  = wp_basename( $video_file, ".{$video_ext}" );
+					$output_file = "{$uploads['path']}/{$video_name}-{$kebab_colors}.{$video_ext}";
+
+					// TODO: Check based on post metadata instead of filename.
+					if ( file_exists( $output_file ) ) {
+						$response = $this->prepare_item_for_response( get_post( $attachment_id ), $request );
+						$response->set_status( 200 );
+						$response->header( 'Location', rest_url( sprintf( '%s/%s/%s', $this->namespace, $this->rest_base, $attachment_id ) ) );
+						return $response;
+					}
+
+					// TODO: Make the haldcut file on-the-fly.
+					$haldclut_dir  = wp_upload_dir( '1970/01', false );
+					$haldclut_file = "{$haldclut_dir['path']}/hald16-{$kebab_colors}.png";
+
+					if ( ! file_exists( $haldclut_file ) ) {
+						return new WP_Error(
+							'rest_duotone_missing_lookup_table',
+							sprintf( 'Unable to edit this video. %s %s', $output_file, $haldclut_file ),
+							array( 'status' => 500 )
+						);
+					}
+
+					// TODO: Security best practices for this in particular.
+					$command = "/usr/local/bin/ffmpeg -y -i {$video_file}  -i {$haldclut_file} -filter_complex '[0][1] haldclut [out]; [out] format=yuv420p' {$output_file}";
+
+					shell_exec("nohup {$command} > /tmp/ffmpeg.log 2>&1 &");
+
+					return new WP_Error(
+						'rest_duotone_debug',
+						sprintf( '$ %s', $command ),
+						array( 'status' => 500 )
+					);
+
+					$response->set_status( 202 );
+					return $response;
+			}
+		}
+
+	}
+
+	/**
+	 * Applies edits to an image and creates a new attachment record.
+	 *
+	 * @since TODO
+	 *
+	 * @param WP_REST_Request $request Full details about the request.
+	 * @return WP_REST_Response|WP_Error Response object on success, WP_Error object on failure.
+	 */
+	protected function edit_image_item( $request ) {
 		require_once ABSPATH . 'wp-admin/includes/image.php';
 
 		$attachment_id = $request['id'];
