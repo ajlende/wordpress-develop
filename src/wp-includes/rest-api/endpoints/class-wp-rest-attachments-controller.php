@@ -55,6 +55,21 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 				'args'                => $this->get_edit_media_item_args(),
 			)
 		);
+		register_rest_route(
+			$this->namespace,
+			'/' . $this->rest_base . '/(?P<id>[\d]+)/status',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'status_media_item' ),
+				'permission_callback' => array( $this, 'status_media_item_permissions_check' ),
+				'args'                => array(
+					'id'     => array(
+						'description' => __( 'Unique identifier for the attachment.' ),
+						'type'        => 'integer',
+					),
+				),
+			)
+		);
 	}
 
 	/**
@@ -409,6 +424,102 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 		return $this->update_item_permissions_check( $request );
 	}
 
+	public function status_media_item( $request ) {
+		$attachment_id = $request['id'];
+		$video_meta = wp_get_attachment_metadata( $attachment_id );
+		
+		if ( ! isset( $video_meta['log_file'] ) ) {
+			return new WP_Error(
+				'rest_file_type_has_no_status',
+				__( 'This type of file does not have a status.' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$log_file = $video_meta['log_file'];
+		$fp = @fopen( $log_file, 'r' );
+
+		if ( ! $fp ) {
+			return new WP_Error(
+				'rest_file_type_has_no_status_file',
+				__( 'Status file is not readable.' ),
+				array( 'status' => 500 )
+			);
+		}
+		
+		$pos            = -1;
+		$line           = '';
+		$c              = '';
+		$query          = 'time';
+		$query_len      = strlen( $query );
+		$query_done     = 'video';
+		$query_done_len = strlen( $query_done );
+		do {
+			if ( $c === ' ' ) {
+				// Clear the line when we hit a space because it's a new value.
+				$line = '';
+			} else {
+				// Continue appending the character to the beginning of the line since we're reading it backwards.
+				$line = $c . $line;
+			};
+			// Move the cursor to the next character.
+			fseek( $fp, $pos--, SEEK_END );
+			// Read a single character.
+			$c = fgetc( $fp );
+		} while (
+			strncmp( $line, $query, $query_len ) !== 0 &&
+			strncmp( $line, $query_done, $query_done_len ) !== 0 &&
+			pos !== -256
+		);
+		
+		fclose($fp);
+		
+		// TODO: Write status code to file and test that instead for success or failure.
+		if ( strncmp( $line, $query_done, $query_done_len ) === 0 ) {
+			$data =  array(
+				'complete' => true,
+				'status_code' => 0,
+				'log_file' => $log_file,
+				'line' => $line
+			);
+		} elseif ( strncmp( $line, $query, $query_len ) === 0 ) {
+			// Parse out the hours, minutes and seconds from `time=HH:MM:SS.MS`.
+			$hms = explode( ':', explode( '=', $line, 2 )[1], 3 );
+			$time = (int)$hms[0] * HOUR_IN_SECONDS + (int)$hms[1] * MINUTE_IN_SECONDS + (float)$hms[2];
+
+			$data =  array(
+				'complete' => false,
+				'time' => $time,
+				'log_file' => $log_file,
+				'line' => $line,
+			);
+		} else {
+			$data =  array(
+				'complete' => false,
+				'log_file' => $log_file,
+				'line' => $line
+			);
+		}
+
+		$response = rest_ensure_response( $data );
+		$response->set_status( 200 );
+
+		return $response;
+	}
+
+
+	public function status_media_item_permissions_check( $request ) {
+		if ( current_user_can( 'edit_posts' ) ) {
+			return true;
+		}
+
+		return new WP_Error(
+			'rest_attachment_cannot_view_status',
+			__( 'Sorry, you are not allowed to view the status of the process.', 'gutenberg' ),
+			array( 'status' => rest_authorization_required_code() )
+		);
+	}
+
 	/**
 	 * Applies edits to a media item and creates a new attachment record.
 	 *
@@ -533,6 +644,7 @@ class WP_REST_Attachments_Controller extends WP_REST_Posts_Controller {
 			// Path to the originally uploaded video file relative to the uploads directory.
 			'file'          => _wp_relative_upload_path( $video_file ),
 		);
+		$new_video_meta['log_file'] = $log_file;
 
 		wp_update_attachment_metadata( $new_attachment_id, $new_video_meta );
 
